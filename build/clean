@@ -1,0 +1,4 @@
+#!/bin/sh
+
+rm -rf ./mnt
+rm -f ./disk.img
