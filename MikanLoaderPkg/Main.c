@@ -190,12 +190,6 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
       gop->Mode->FrameBufferBase + gop->Mode->FrameBufferSize,
       gop->Mode->FrameBufferSize);
   
-  // ** draw it
-  UINT8 *frame_buffer = (UINT8*)gop->Mode->FrameBufferBase;
-  for(UINTN ix=0; ix!=gop->Mode->FrameBufferSize; ++ix){
-    frame_buffer[ix] = 0xff;
-  }
-
   // ** load kernel
   EFI_FILE_PROTOCOL *kernel_file;
   root_dir->Open(root_dir, &kernel_file, L"\\kernel.elf", EFI_FILE_MODE_READ, 0);
@@ -237,9 +231,10 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
   // ** boot kernel
   //Print(L"[.] Kernel is booting...\n"); // [guess] printing something would change memmap and invoke error.
   UINT64 entry_addr = *(UINT64*)(kernel_base_addr + 0x18); // 0x18 is offset inside ELF header, where addr of entry-point is written
-  typedef void EntryPointType(void);  
+  typedef void EntryPointType(UINT64, UINT64);  
   EntryPointType *entry_point = (EntryPointType*)entry_addr; // cast addr of entrypoint into func pointer
-  entry_point();
+  entry_point(gop->Mode->FrameBufferBase, gop->Mode->FrameBufferSize);
+
 
   Print(L"[.] All done\n");
 
