@@ -8,8 +8,10 @@
 #include<Protocol/BlockIo.h>
 #include<Guid/FileInfo.h>
 #include<Library/MemoryAllocationLib.h>
+#include<Library/BaseMemoryLib.h>
 
 #include"frame_buffer_config.hpp"
+#include"elf.hpp"
 
 #define KERN_LOAD_BASE 0x100000
 
@@ -32,6 +34,37 @@ void noreturn Halt(void)
     __asm__("hlt");
   }
 }
+
+/** ELF **/
+// parse program header of ELF and calculate the start/end vaddr.
+void CalcLoadAddressRange(Elf64_Ehdr *ehdr, UINT64 *first, UINT64 *last)
+{
+  Elf64_Phdr *phdr = (Elf64_Phdr*)((UINT64)ehdr + ehdr->e_phoff);
+  *first = MAX_UINT64;
+  *last = 0;
+  for(Elf64_Half ix = 0; ix!= ehdr->e_phnum; ++ix){
+    if(phdr[ix].p_type != PT_LOAD)
+      continue;
+    *first = MIN(*first, phdr[ix].p_vaddr);
+    *last = MAX(*last, phdr[ix].p_vaddr + phdr[ix].p_memsz);
+  }
+}
+
+void CopyLoadSegments(Elf64_Ehdr *ehdr)
+{
+  Elf64_Phdr *phdr = (Elf64_Phdr*)((UINT64)ehdr + ehdr->e_phoff);
+  for(Elf64_Half ix=0; ix!=ehdr->e_phnum; ++ix){
+    if(phdr[ix].p_type != PT_LOAD)
+      continue;
+    // load segment
+    UINT64 seg = (UINT64)ehdr + phdr[ix].p_offset;
+    CopyMem((VOID*)phdr[ix].p_vaddr, (VOID*)seg, phdr[ix].p_filesz);
+    // clear .bss
+    UINTN remain_bytes = phdr[ix].p_memsz - phdr[ix].p_filesz;
+    SetMem((VOID*)(phdr[ix].p_vaddr + phdr[ix].p_filesz), remain_bytes, 0);
+  }
+}
+/** (END ELF) **/
 
 EFI_STATUS GetMemoryMap(struct MemoryMap* map) {
   if (map->buffer == NULL) {
@@ -212,16 +245,41 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
   EFI_FILE_INFO *file_info = (EFI_FILE_INFO*)file_info_buffer;
   UINTN kernel_file_size = file_info->FileSize;
 
-  // allocate necessary memory for kernel image
-  EFI_PHYSICAL_ADDRESS kernel_base_addr = KERN_LOAD_BASE;
-  status = gBS->AllocatePages(AllocateAddress, EfiLoaderData, (kernel_file_size + 0xfff) / PAGE, &kernel_base_addr);
+  // read kernel image temporaly
+  VOID *kernel_buffer;  // tmp buffer for kernel ELF
+  status = gBS->AllocatePool(EfiLoaderData, kernel_file_size, &kernel_buffer);
   if(EFI_ERROR(status)){
-    Print(L"[!] Failed to allocate pages: %r", status);
+    Print(L"[!] failed to allocate pool: %r\n", status);
     Halt();
   }
-  // read kernel image
-  kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_base_addr);
-  Print(L"[+] Kernel: 0x%0lx (%lu bytes)\n", kernel_base_addr, kernel_file_size);
+  status = kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_buffer);
+  if(EFI_ERROR(status)){
+    Print(L"[!] failed to load temp kernel image: %r\n", status);
+    Halt();
+  }
+  Print(L"[+] Kernel(tmp): 0x%0lx (%lu bytes)\n", kernel_buffer, kernel_file_size);
+
+  // parse kernel ELF
+  Elf64_Ehdr *kernel_ehdr = (Elf64_Ehdr*)kernel_buffer;
+  UINT64 kernel_first_addr, kernel_last_addr;
+  CalcLoadAddressRange(kernel_ehdr, &kernel_first_addr, &kernel_last_addr);
+  UINTN num_pages = (kernel_last_addr - kernel_first_addr + PAGE - 1) / PAGE;
+
+  // allocate actual page to load kernel and copy load segments
+  status = gBS->AllocatePages(AllocateAddress, EfiLoaderData, num_pages, &kernel_first_addr);
+  if(EFI_ERROR(status)){
+    Print(L"[!] failed to allocate pages: %r\n", status);
+    Halt();
+  }
+  CopyLoadSegments(kernel_ehdr);
+  Print(L"[+] Kernel: 0x%0lx - 0x%0lx\n", kernel_first_addr, kernel_last_addr);
+
+  // free tmp page
+  status = gBS->FreePool(kernel_buffer);
+  if(EFI_ERROR(status)){
+    Print(L"failed to free pool: %r\n", status);
+    Halt();
+  }
 
   // ** exit boot service
   Print(L"[.] Exiting Boot Services...\n");
@@ -263,7 +321,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
 
   // ** boot kernel
   //Print(L"[.] Kernel is booting...\n"); // [guess] printing something would change memmap and invoke error.
-  UINT64 entry_addr = *(UINT64*)(kernel_base_addr + 0x18); // 0x18 is offset inside ELF header, where addr of entry-point is written
+  UINT64 entry_addr = *(UINT64*)(kernel_first_addr + 0x18); // 0x18 is offset inside ELF header, where addr of entry-point is written
   typedef void EntryPointType(const struct FrameBufferConfig*);  
   EntryPointType *entry_point = (EntryPointType*)entry_addr; // cast addr of entrypoint into func pointer
   entry_point(&config);
