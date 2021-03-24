@@ -1,13 +1,15 @@
-#include  <Uefi.h>
-#include  <Library/UefiLib.h>
-#include  <Library/UefiBootServicesTableLib.h>
-#include  <Library/PrintLib.h>
-#include  <Protocol/LoadedImage.h>
-#include  <Protocol/SimpleFileSystem.h>
-#include  <Protocol/DiskIo2.h>
-#include  <Protocol/BlockIo.h>
-#include  <Guid/FileInfo.h>
-#include  <Library/MemoryAllocationLib.h>
+#include<Uefi.h>
+#include<Library/UefiLib.h>
+#include<Library/UefiBootServicesTableLib.h>
+#include<Library/PrintLib.h>
+#include<Protocol/LoadedImage.h>
+#include<Protocol/SimpleFileSystem.h>
+#include<Protocol/DiskIo2.h>
+#include<Protocol/BlockIo.h>
+#include<Guid/FileInfo.h>
+#include<Library/MemoryAllocationLib.h>
+
+#include"frame_buffer_config.hpp"
 
 #define KERN_LOAD_BASE 0x100000
 
@@ -240,12 +242,31 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
     }
   }
 
+  // ** get Frame Buffer information
+  struct FrameBufferConfig config = {
+    .frame_buffer = (UINT8*)gop->Mode->FrameBufferBase,
+    .pixels_per_scan_line = gop->Mode->Info->PixelsPerScanLine,
+    .horizontal_resolution = gop->Mode->Info->HorizontalResolution,
+    .vertical_resolution = gop->Mode->Info->VerticalResolution,
+    0
+  };
+  switch(gop->Mode->Info->PixelFormat){
+    case PixelRedGreenBlueReserved8BitPerColor:
+      config.pixel_format = kPixelBGRResv8BitPerColor;
+      break;
+    case PixelBlueGreenRedReserved8BitPerColor:
+      config.pixel_format = kPixelBGRResv8BitPerColor;
+      break;
+    default:
+      Print(L"[!] Unimplemented pixel format: %d\n", gop->Mode->Info->PixelFormat);
+  }
+
   // ** boot kernel
   //Print(L"[.] Kernel is booting...\n"); // [guess] printing something would change memmap and invoke error.
   UINT64 entry_addr = *(UINT64*)(kernel_base_addr + 0x18); // 0x18 is offset inside ELF header, where addr of entry-point is written
-  typedef void EntryPointType(UINT64, UINT64);  
+  typedef void EntryPointType(const struct FrameBufferConfig*);  
   EntryPointType *entry_point = (EntryPointType*)entry_addr; // cast addr of entrypoint into func pointer
-  entry_point(gop->Mode->FrameBufferBase, gop->Mode->FrameBufferSize);
+  entry_point(&config);
 
 
   Print(L"[.] All done\n");

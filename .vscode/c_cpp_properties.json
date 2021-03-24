@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${default}",
+                "${workspaceFolder}/kernel",
+                "${workspaceFolder}/devenv/x86_64-elf/include",
+                "/home/wataru/edk2/MdePkg/Include",
+                "/home/wataru/edk2/MdePkg/Include/X64",
+                "${workspaceFolder}/devenv/x86_64-elf/include/c++/v1",
+                "${workspaceFolder}/devenv/x86_64-elf/include/sys"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c11",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "linux-clang-x64"
+        }
+    ],
+    "version": 4
+}
