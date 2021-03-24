@@ -13,7 +13,8 @@
 
 #define PAGE 0x1000
 
-// #@@range_begin(struct_memory_map)
+#define noreturn
+
 struct MemoryMap {
   UINTN buffer_size;
   VOID* buffer;
@@ -22,7 +23,13 @@ struct MemoryMap {
   UINTN descriptor_size;
   UINT32 descriptor_version;
 };
-// #@@range_end(struct_memory_map)
+
+void noreturn Halt(void)
+{
+  while(1==1){
+    __asm__("hlt");
+  }
+}
 
 EFI_STATUS GetMemoryMap(struct MemoryMap* map) {
   if (map->buffer == NULL) {
@@ -157,6 +164,8 @@ const CHAR16* GetPixelFormatUnicode(EFI_GRAPHICS_PIXEL_FORMAT fmt) {
 
 EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_table) 
 {
+  EFI_STATUS status;
+
   // ** bootloader banner 
   Print(L"Hello, Mikan World!\n");
 
@@ -203,14 +212,17 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
 
   // allocate necessary memory for kernel image
   EFI_PHYSICAL_ADDRESS kernel_base_addr = KERN_LOAD_BASE;
-  gBS->AllocatePages(AllocateAddress, EfiLoaderData, (kernel_file_size + 0xfff) / PAGE, &kernel_base_addr);
+  status = gBS->AllocatePages(AllocateAddress, EfiLoaderData, (kernel_file_size + 0xfff) / PAGE, &kernel_base_addr);
+  if(EFI_ERROR(status)){
+    Print(L"[!] Failed to allocate pages: %r", status);
+    Halt();
+  }
   // read kernel image
   kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_base_addr);
   Print(L"[+] Kernel: 0x%0lx (%lu bytes)\n", kernel_base_addr, kernel_file_size);
 
   // ** exit boot service
   Print(L"[.] Exiting Boot Services...\n");
-  EFI_STATUS status;
   status = gBS->ExitBootServices(image_handle, memmap.map_key);
   Print(L"[.] Checking exit status...\n");
   if(EFI_ERROR(status)){
