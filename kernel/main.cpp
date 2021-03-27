@@ -21,8 +21,28 @@ void* operator new(size_t size, void *buf){
 void operator delete(void *obj) noexcept{
 }
 
+/******* globals *************/
+char console_buf[sizeof(Console)];
+Console *console;
+
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer = nullptr;
+/*** (END globals) ***********/
+
+
+int printk(const char *format, ...)
+{
+  va_list ap;
+  int result;
+  char s[0x400];
+
+  va_start(ap, format);
+  result = vsprintf(s, format, ap);
+  va_end(ap);
+
+  console->PutString(s);
+  return result;
+}
 
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
@@ -48,6 +68,7 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
       }
     }
   }
+  console = new(console_buf) Console{*pixel_writer, {33, 33, 33}, {00, 0xFF, 00}};
 
   // draw string
   char strbuf[0x200];
@@ -55,13 +76,10 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   sprintf(strbuf, "Hello, world %d", year);
   WriteString(*pixel_writer, 0x100, 0x100, strbuf, {30,30,30});
 
-  Console console{*pixel_writer, {33, 33, 33}, {00, 0xFF, 00}};
   for (int ix = 0; ix != 7; ++ix){
-    sprintf(strbuf, "LINE: %d\n", ix);
-    console.PutString(strbuf);
+    printk("LINE: %d\n", ix);
   }
-  sprintf(strbuf, "In my younger and more vulnerable years my father gave me some advice that I've been turning over in my mind ever since. \"Whenever you feel like criticizing any one,\" he told me, \"just remember that all the people in this world haven't had the advantages that you've had.\"");
-  console.PutString(strbuf);
+  printk("In my younger and more vulnerable years my father gave me some advice that I've been turning over in my mind ever since. \"Whenever you feel like criticizing any one,\" he told me, \"just remember that all the people in this world haven't had the advantages that you've had.\"");
 
   hlt();
 }
