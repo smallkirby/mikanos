@@ -5,6 +5,7 @@
 #include"frame_buffer_config.hpp"
 #include"graphics.hpp"
 #include"font.hpp"
+#include"console.hpp"
 
 #define noreturn
 
@@ -53,6 +54,14 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   int year = 2021;
   sprintf(strbuf, "Hello, world %d", year);
   WriteString(*pixel_writer, 0x100, 0x100, strbuf, {30,30,30});
+
+  Console console{*pixel_writer, {33, 33, 33}, {00, 0xFF, 00}};
+  for (int ix = 0; ix != 7; ++ix){
+    sprintf(strbuf, "LINE: %d\n", ix);
+    console.PutString(strbuf);
+  }
+  sprintf(strbuf, "In my younger and more vulnerable years my father gave me some advice that I've been turning over in my mind ever since. \"Whenever you feel like criticizing any one,\" he told me, \"just remember that all the people in this world haven't had the advantages that you've had.\"");
+  console.PutString(strbuf);
 
   hlt();
 }
