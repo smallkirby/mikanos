@@ -1,5 +1,6 @@
 #include<cstdint>
 #include<cstddef>
+#include<cstdio>
 
 #include"frame_buffer_config.hpp"
 #include"graphics.hpp"
@@ -33,6 +34,7 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
       break;
   }
 
+  // draw rectangle
   if(pixel_writer != nullptr){
     for(int x=0; x!=frame_buffer_config.horizontal_resolution; ++x){
       for(int y=0; y!=frame_buffer_config.vertical_resolution; ++y){
@@ -46,10 +48,11 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     }
   }
 
-  char *mystr = "ASCII chars.\x00", *ptr;
-  for(ptr = mystr; *ptr != 0; ++ptr){
-    WriteAscii(*pixel_writer, 0x100 + (ptr-mystr)*8, 0x100, *ptr, {0,0,0});
-  }
+  // draw string
+  char strbuf[0x200];
+  int year = 2021;
+  sprintf(strbuf, "Hello, world %d", year);
+  WriteString(*pixel_writer, 0x100, 0x100, strbuf, {30,30,30});
 
   hlt();
 }

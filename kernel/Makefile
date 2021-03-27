@@ -1,13 +1,12 @@
 SHELL = /bin/bash
-BASEDIR = $(CURDIR)/../devenv/x86_64-elf
 
 TARGET = kernel.elf
-OBJS = main.o graphics.o font.o hankaku.o
-DEPENDS = $(join $(dir $(OBJS)), $(addprefix ., $(notdir $(OBJS:.o=.d))))
+OBJS = main.o graphics.o font.o hankaku.o newlib_support.o
+DEPENDS = $(join $(dir $(OBJS)),$(addprefix .,$(notdir $(OBJS:.o=.d))))
 
-CXXFLAGS = -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone -fno-exceptions -fno-rtti -std=c++17 
-INCLUDES = -I$(BASEDIR)/include/c++/v1 -I$(BASEDIR)/include -I$(BASEDIR)/include/freetype2 -nostdlibinc -D__ELF__ -D_LDBL_EQ_DBL -D_GNU_SOURCE -D_POSIX_TIMERS
-LDFLAGS = -L$(BASEDIR)/lib --entry KernelMain -z norelro --image-base 0x100000 --static
+CFLAGS   += -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone
+CXXFLAGS += -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone -fno-exceptions -fno-rtti -std=c++17 
+LDFLAGS += --entry KernelMain -z norelro --image-base 0x100000 --static
 
 .PHONY: all clean depends
 all: $(TARGET)
@@ -20,15 +19,23 @@ depends:
 	$(MAKE) $(DEPENDS)
 
 kernel.elf: $(OBJS) Makefile
-	ld.lld $(LDFLAGS) -o $@ $(OBJS)
+	ld.lld $(LDFLAGS) -o $@ $(OBJS) -lc
 
 %.o: %.cpp Makefile
-	clang++ $(INCLUDES) $(CPPFLAGS) $(CXXFLAGS) -c $<
+	clang++ $(CPPFLAGS) $(CXXFLAGS) -c $<
+
+%.o: %.c Makefile
+	clang  $(CPPFLAGS) $(CFLAGS) -c $<
 
 .%.d: %.cpp
 	clang++ $(CPPFLAGS) $(CXXFLAGS) -MM $< > $@
 	$(eval OBJ = $(<:.cpp=.o))
-	sed --in-place 's|$(notdir $(OBJ))|$(OBJ)' $@
+	sed --in-place 's|$(notdir $(OBJ))|$(OBJ)|' $@
+
+.%.d: %.c
+	clang $(CPPFLAGS) $(CFLAGS) -MM $< > $@
+	$(eval OBJ = $(<:.c=.o))
+	sed --in-place 's|$(notdir $(OBJ))|$(OBJ)|' $@
 
 hankaku.bin: hankaku.txt
 	../tools/makefont.py -o $@ $<
