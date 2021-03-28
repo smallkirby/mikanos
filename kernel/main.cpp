@@ -7,6 +7,7 @@
 #include"font.hpp"
 #include"console.hpp"
 #include"color.hpp"
+#include"pci.hpp"
 
 #define noreturn
 
@@ -16,9 +17,6 @@ void noreturn hlt(){
   }
 }
 
-void* operator new(size_t size, void *buf){
-  return buf;
-}
 void operator delete(void *obj) noexcept{
 }
 
@@ -103,17 +101,6 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   drawDesktop(*pixel_writer);
   console = new(console_buf) Console{*pixel_writer, C_NORMAL_FG, C_NORMAL_BG};
 
-  // draw string
-  char strbuf[0x200];
-  int year = 2021;
-  sprintf(strbuf, "Hello, world %d", year);
-  WriteString(*pixel_writer, 0x100, 0x100, strbuf, {30,30,30}, {0xFF,0xFF,0xFF});
-
-  for (int ix = 0; ix != 7; ++ix){
-    printk("LINE: %d\n", ix);
-  }
-  printk("In my younger and more vulnerable years my father gave me some advice that I've been turning over in my mind ever since. \"Whenever you feel like criticizing any one,\" he told me, \"just remember that all the people in this world haven't had the advantages that you've had.\"");
-
   // render mouse cursor
   for(int dy=0; dy!=kMouseCursorHeight; ++dy){
     for(int dx=0; dx!=kMouseCursorWidth; ++dx){
@@ -123,6 +110,16 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
         pixel_writer->Write(200 + dx, 100 + dy, C_MOUSE_NORMAL);
       }
     }
+  }
+
+  // list all the PCI devices
+  auto err = pci::ScanAllBus();
+  printk("ScanAllBus: %s\n", err.Name());
+  for(int ix=0; ix!=pci::num_device; ++ix){
+    const auto& dev = pci::devices[ix];
+    auto vendor_id = pci::ReadVendorId(dev.bus, dev.device, dev.function);
+    auto class_code = pci::ReadClassCode(dev.bus, dev.device, dev.function);
+    printk("%d.%d.%d: vend=%04x, class=%08x, head=%02x\n", dev.bus, dev.device, dev.function, vendor_id, class_code, dev.header_type);
   }
 
   hlt();
