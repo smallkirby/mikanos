@@ -13,7 +13,7 @@ void Console::PutString(const char *s)
     if(*s == '\n'){
       Newline();
     }else if(cursor_column_ < kColumns - 1){
-      WriteAscii(writer_, 8 * cursor_column_, 16 * cursor_row_, *s, fg_color_);
+      WriteAscii(writer_, 8 * cursor_column_, 16 * cursor_row_, *s, fg_color_, bg_color_);
       buffer_[cursor_row_][cursor_column_] = *s;
       ++cursor_column_;
     }else{
@@ -39,7 +39,7 @@ void Console::Newline()
     // redraw
     for (int row = 0; row != kRows - 1; ++row){
       memcpy(buffer_[row], buffer_[row + 1], kColumns + 1);
-      WriteString(writer_, 0, 16 * row, buffer_[row], fg_color_);
+      WriteString(writer_, 0, 16 * row, buffer_[row], fg_color_, bg_color_);
     }
     memset(buffer_[kRows - 1], 0, kColumns + 1);
   }
