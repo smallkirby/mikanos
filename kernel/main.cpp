@@ -9,6 +9,7 @@
 #include"color.hpp"
 #include"pci.hpp"
 #include"logger.hpp"
+#include"mouse.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -34,40 +35,18 @@ Console *console;
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer = nullptr;
 
-const int kMouseCursorWidth = 15;
-const int kMouseCursorHeight = 24;
-const char mouse_cursor_shape[kMouseCursorHeight][kMouseCursorWidth + 1] = {
-  "@              ",
-  "@@             ",
-  "@.@            ",
-  "@..@           ",
-  "@...@          ",
-  "@....@         ",
-  "@.....@        ",
-  "@......@       ",
-  "@.......@      ",
-  "@........@     ",
-  "@.........@    ",
-  "@..........@   ",
-  "@...........@  ",
-  "@............@ ",
-  "@......@@@@@@@@",
-  "@......@       ",
-  "@....@@.@      ",
-  "@...@ @.@      ",
-  "@..@   @.@     ",
-  "@.@    @.@     ",
-  "@@      @.@    ",
-  "@       @.@    ",
-  "         @.@   ",
-  "         @@@   ",
-};
 
 static int kFrameWidth;
 static int kFrameHeight;
 
+char mouse_cursor_buf[sizeof(MouseCursor)];
+MouseCursor *mouse_cursor;
 /*** (END globals) ***********/
 
+void MouseObserver(int8_t displacement_x, int8_t displacement_y)
+{
+  mouse_cursor->MoveRelative({displacement_x, displacement_y});
+}
 
 int printk(const char *format, ...)
 {
@@ -90,6 +69,7 @@ void drawDesktop(PixelWriter &writer)
   FillRectangle(writer, {0, kFrameHeight-50 + 3}, {kFrameHeight/5, 50-3-3}, C_DESKTOP_ACCENT);
   DrawRectangle(writer, {0, kFrameHeight-50 + 3}, {kFrameHeight/5, 50-3-3}, C_DESKTOP_EDGE);
 
+  mouse_cursor = new(mouse_cursor_buf) MouseCursor{pixel_writer, C_DESKTOP_BG, {300,200}};
 }
 
 // Intel Panther Point chipset has both EHCI(USB2.0) and xHCI controllers,
@@ -115,7 +95,7 @@ void SwitchEhci2Xhci(const pci::Device &xhc_dev) {
 
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
-  SetLogLevel(kDebug);
+  SetLogLevel(kWarn);
 
   kFrameWidth = frame_buffer_config.horizontal_resolution;
   kFrameHeight = frame_buffer_config.vertical_resolution;
@@ -130,17 +110,6 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 
   drawDesktop(*pixel_writer);
   console = new(console_buf) Console{*pixel_writer, C_NORMAL_FG, C_NORMAL_BG};
-
-  // render mouse cursor
-  for(int dy=0; dy!=kMouseCursorHeight; ++dy){
-    for(int dx=0; dx!=kMouseCursorWidth; ++dx){
-      if(mouse_cursor_shape[dy][dx] == '@'){
-        pixel_writer->Write(200 + dx, 100 + dy, C_MOUSE_GRID);
-      }else if(mouse_cursor_shape[dy][dx] == '.'){
-        pixel_writer->Write(200 + dx, 100 + dy, C_MOUSE_NORMAL);
-      }
-    }
-  }
 
   // list all the PCI devices
   auto err = pci::ScanAllBus();
@@ -186,6 +155,26 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   }
   Log(kInfo, "xHC starting\n");
   xhc.Run();
+
+  usb::HIDMouseDriver::default_observer = MouseObserver;
+  // find connected device and configure
+  for(int ix=1; ix<=xhc.MaxPorts(); ++ix){
+    auto port = xhc.PortAt(ix);
+    Log(kDebug, "Port %d: IsConnected=%d\n", ix, port.IsConnected());
+    if(port.IsConnected()){
+      if(auto err = ConfigurePort(xhc, port)){
+        Log(kError, "failed to configure port: %s at %s: %d\n", err.Name(), err.File(), err.Line());
+        continue;
+      }
+    }
+  }
+
+  // endlessly repeat polling
+  while(1==1){
+    if(auto err = ProcessEvent(xhc)){
+      Log(kError, "Error while ProcessEvent: %s at %s: %d\n", err.Name(), err.File(), err.Line());
+    }
+  }
 
   hlt();
 }
