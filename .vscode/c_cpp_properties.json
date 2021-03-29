@@ -9,7 +9,8 @@
                 "/home/wataru/edk2/MdePkg/Include",
                 "/home/wataru/edk2/MdePkg/Include/X64",
                 "${workspaceFolder}/devenv/x86_64-elf/include/c++/v1",
-                "${workspaceFolder}/devenv/x86_64-elf/include/sys"
+                "${workspaceFolder}/devenv/x86_64-elf/include/sys",
+                "${workspaceFolder}/devenv/x86_64-elf/include/c++/v1"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/clang",

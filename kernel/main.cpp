@@ -8,6 +8,13 @@
 #include"console.hpp"
 #include"color.hpp"
 #include"pci.hpp"
+#include"logger.hpp"
+
+#include"usb/memory.hpp"
+#include"usb/device.hpp"
+#include"usb/classdriver/mouse.hpp"
+#include"usb/xhci/xhci.hpp"
+#include"usb/xhci/trb.hpp"
 
 #define noreturn
 
@@ -85,8 +92,31 @@ void drawDesktop(PixelWriter &writer)
 
 }
 
+// Intel Panther Point chipset has both EHCI(USB2.0) and xHCI controllers,
+// and uses EHCI by default. Hence, switch to a xHCI controller.
+void SwitchEhci2Xhci(const pci::Device &xhc_dev) {
+  bool intel_ehc_exist = false;
+  for (int ix = 0; ix != pci::num_device; ++ix) {
+    if (pci::devices[ix].class_code.Match(0x0cu, 0x03u, 0x20u) /* EHCI */ && 0x8086 == pci::ReadVendorId(pci::devices[ix]) /* Intel */ ) {
+      intel_ehc_exist = true;
+      break;
+    }
+  }
+  if (!intel_ehc_exist) {
+    return;
+  }
+
+  uint32_t superspeed_ports = pci::ReadConfReg(xhc_dev, 0xdc);  // USB3PRM
+  pci::WriteConfReg(xhc_dev, 0xd8, superspeed_ports);           // USB3_PSSEN
+  uint32_t ehci2xhci_ports = pci::ReadConfReg(xhc_dev, 0xd4);   // XUSB2PRM
+  pci::WriteConfReg(xhc_dev, 0xd0, ehci2xhci_ports);            // XUSB2PR
+  Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n", superspeed_ports, ehci2xhci_ports);
+}
+
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
+  SetLogLevel(kDebug);
+
   kFrameWidth = frame_buffer_config.horizontal_resolution;
   kFrameHeight = frame_buffer_config.vertical_resolution;
   switch(frame_buffer_config.pixel_format){
@@ -122,5 +152,46 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     printk("%d.%d.%d: vend=%04x, class=%08x, head=%02x\n", dev.bus, dev.device, dev.function, vendor_id, class_code, dev.header_type);
   }
 
+  // find xHC device
+  pci::Device *xhc_dev = nullptr;
+  for(int ix=0; ix!=pci::num_device; ++ix){
+    if(pci::devices[ix].class_code.Match(0x0CU, 0x03U, 0x30U)){
+      xhc_dev = &pci::devices[ix];
+      // prefer Intel device
+      if(0x8086 == pci::ReadVendorId(*xhc_dev)){
+        break;
+      }
+    }
+  }
+  if(xhc_dev){
+    Log(kInfo, "xHC has been found: %d.%d.%d\n", xhc_dev->bus, xhc_dev->device, xhc_dev->function);
+  }else{
+    Log(kError, "xHC not found...\n");
+  }
+
+  // read MMIO addr from BAR0 register in PCI configuration space
+  const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
+  Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
+  const uint64_t xhc_mmio_base = xhc_bar.value & ~static_cast<uint64_t>(0xF);
+  Log(kDebug, "xHC mmio_base = 0x%lx\n", xhc_mmio_base);
+
+  // reset, init, config xHC
+  usb::xhci::Controller xhc{xhc_mmio_base};
+  if(0x8086 == pci::ReadVendorId(*xhc_dev)){
+    SwitchEhci2Xhci(*xhc_dev);
+  }
+  {
+    auto err = xhc.Initialize();
+    Log(kDebug, "xhc.Initialize: %s\n", err.Name());
+  }
+  Log(kInfo, "xHC starting\n");
+  xhc.Run();
+
   hlt();
+}
+
+extern "C" void __cxa_pure_virtual() {
+  while(1==1){
+    __asm__("hlt");
+  }
 }
