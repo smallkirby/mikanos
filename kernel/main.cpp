@@ -10,6 +10,8 @@
 #include"pci.hpp"
 #include"logger.hpp"
 #include"mouse.hpp"
+#include"interrupt.hpp"
+#include"asmfunc.h"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -41,6 +43,9 @@ static int kFrameHeight;
 
 char mouse_cursor_buf[sizeof(MouseCursor)];
 MouseCursor *mouse_cursor;
+
+usb::xhci::Controller *xhc;
+
 /*** (END globals) ***********/
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y)
@@ -93,10 +98,19 @@ void SwitchEhci2Xhci(const pci::Device &xhc_dev) {
   Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n", superspeed_ports, ehci2xhci_ports);
 }
 
+__attribute__((interrupt))
+void IntHandlerXHCI(InterruptFrame *frame)
+{
+  while(xhc->PrimaryEventRing()->HasFront()){
+    if(auto err = ProcessEvent(*xhc)){
+      Log(kError, "Error while ProcessEvent: %s at %s: %d\n", err.Name(), err.File(), err.Line());
+    }
+  }
+  NotifyEndOfInterrupt();
+}
+
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
-  SetLogLevel(kWarn);
-
   kFrameWidth = frame_buffer_config.horizontal_resolution;
   kFrameHeight = frame_buffer_config.vertical_resolution;
   switch(frame_buffer_config.pixel_format){
@@ -138,6 +152,17 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     Log(kError, "xHC not found...\n");
   }
 
+  // set IDT for xHCI device
+  const uint16_t cs = GetCS();
+  Log(kDebug, "CS: 0x%x\n", cs);
+  SetIDTEntry(idt[InterruptVector::kXHCI], MakeIDTAttr(DescriptorType::kInterruptGate, 0), reinterpret_cast<uint64_t>(IntHandlerXHCI), cs);
+  LoadIDT(sizeof(idt)-1, reinterpret_cast<uintptr_t>(&idt[0]));
+
+  // enable interruption for xHCI device
+  const uint8_t bsp_local_apic_id = *reinterpret_cast<const uint32_t*>(0xFEE00020) >> 24; // get CPU core number, BSP means Bootstrap Processor
+  Log(kDebug, "Bootstrap Processor APIC num: #0x%x\n", bsp_local_apic_id);
+  pci::ConfigureMSIFixedDestination(*xhc_dev, bsp_local_apic_id, pci::MSITriggerMode::kLevel, pci::MSIDeliveryMode::kFixed, InterruptVector::kXHCI, 0);
+
   // read MMIO addr from BAR0 register in PCI configuration space
   const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
   Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
@@ -156,6 +181,9 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   Log(kInfo, "xHC starting\n");
   xhc.Run();
 
+  ::xhc = &xhc;
+  __asm__("sti");   // enable interruption
+
   usb::HIDMouseDriver::default_observer = MouseObserver;
   // find connected device and configure
   for(int ix=1; ix<=xhc.MaxPorts(); ++ix){
@@ -165,14 +193,9 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
       if(auto err = ConfigurePort(xhc, port)){
         Log(kError, "failed to configure port: %s at %s: %d\n", err.Name(), err.File(), err.Line());
         continue;
+      }else{
+        Log(kDebug, "configured port: %s at %s: %d\n", err.Name(), err.File(), err.Line());
       }
-    }
-  }
-
-  // endlessly repeat polling
-  while(1==1){
-    if(auto err = ProcessEvent(xhc)){
-      Log(kError, "Error while ProcessEvent: %s at %s: %d\n", err.Name(), err.File(), err.Line());
     }
   }
 
