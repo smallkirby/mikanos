@@ -12,6 +12,7 @@
 #include"mouse.hpp"
 #include"interrupt.hpp"
 #include"asmfunc.h"
+#include"queue.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -45,6 +46,16 @@ char mouse_cursor_buf[sizeof(MouseCursor)];
 MouseCursor *mouse_cursor;
 
 usb::xhci::Controller *xhc;
+
+// holds a type of interruption
+struct Message{
+  enum Type{
+    kInterruptXHCI,
+  } type;
+};
+
+// interruption message queue
+ArrayQueue<Message> *main_queue;
 
 /*** (END globals) ***********/
 
@@ -98,19 +109,19 @@ void SwitchEhci2Xhci(const pci::Device &xhc_dev) {
   Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n", superspeed_ports, ehci2xhci_ports);
 }
 
+// interrupt handler of xHCI device.
+// just put the message onto the message queue, and process it lazily.
 __attribute__((interrupt))
 void IntHandlerXHCI(InterruptFrame *frame)
 {
-  while(xhc->PrimaryEventRing()->HasFront()){
-    if(auto err = ProcessEvent(*xhc)){
-      Log(kError, "Error while ProcessEvent: %s at %s: %d\n", err.Name(), err.File(), err.Line());
-    }
-  }
+  main_queue->Push(Message{Message::kInterruptXHCI});
   NotifyEndOfInterrupt();
+
 }
 
 extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
 {
+  // configure writer
   kFrameWidth = frame_buffer_config.horizontal_resolution;
   kFrameHeight = frame_buffer_config.vertical_resolution;
   switch(frame_buffer_config.pixel_format){
@@ -122,8 +133,14 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
       break;
   }
 
+  // draw desktop, console, and mouse
   drawDesktop(*pixel_writer);
   console = new(console_buf) Console{*pixel_writer, C_NORMAL_FG, C_NORMAL_BG};
+
+  // prepare message queue
+  std::array<Message, 32> main_queue_data;
+  ArrayQueue<Message> main_queue(main_queue_data);
+  ::main_queue = &main_queue;
 
   // list all the PCI devices
   auto err = pci::ScanAllBus();
@@ -199,7 +216,39 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
     }
   }
 
-  hlt();
+  // poll message queue and process it
+  while(1==1){
+    __asm__("cli"); // ignore all the maskable interrupts.
+    if(main_queue.Count() == 0){
+      __asm__("sti");
+      __asm__("hlt");
+      continue;
+    }
+
+    Log(kDebug, "Message Queue: 0x%x/0x%x\n", main_queue.Count(), main_queue.Capacity());
+    Log(kDebug, "Handling message...\n");
+    Message msg = main_queue.Front();
+    main_queue.Pop();
+    Log(kDebug, "Message: 0x%x\n", msg.type);
+    Log(kDebug, "Message Queue: 0x%x/0x%x\n", main_queue.Count(), main_queue.Capacity());
+    __asm__("sti");
+
+    switch(msg.type){
+      case Message::kInterruptXHCI:
+        while(xhc.PrimaryEventRing()->HasFront()){
+          if(auto err = ProcessEvent(xhc)){
+            Log(kError, "Error while ProcessEvent: %s at %s: %d\n", err.Name(), err.File(), err.Line());
+          }
+        }
+        break;
+
+      default:
+        Log(kError, "Unknown message type: 0x%x\n", msg.type);
+        break;
+    }
+  }
+
+  Log(kError, "[!] Reached unreachable point!\n");
 }
 
 extern "C" void __cxa_pure_virtual() {
