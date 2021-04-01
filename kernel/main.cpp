@@ -124,8 +124,14 @@ void IntHandlerXHCI(InterruptFrame *frame)
 
 }
 
-extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config, const MemoryMap &memory_map)
+alignas(0x10) uint8_t kernel_main_stack[0x400 * 0x400];
+
+extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_ref, const MemoryMap &memory_map_ref)
 {
+  // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
+  FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
+  MemoryMap memory_map{memory_map_ref};
+
   const std::array available_memory_types{
     MemoryType::kEfiBootServicesCode,
     MemoryType::kEfiBootServicesData,
