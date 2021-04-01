@@ -11,6 +11,7 @@
 #include<Library/BaseMemoryLib.h>
 
 #include"frame_buffer_config.hpp"
+#include"memory_map.hpp"
 #include"elf.hpp"
 
 #define KERN_LOAD_BASE 0x100000
@@ -18,15 +19,6 @@
 #define PAGE 0x1000
 
 #define noreturn
-
-struct MemoryMap {
-  UINTN buffer_size;
-  VOID* buffer;
-  UINTN map_size;
-  UINTN map_key;
-  UINTN descriptor_size;
-  UINT32 descriptor_version;
-};
 
 void noreturn Halt(void)
 {
@@ -111,7 +103,7 @@ EFI_STATUS SaveMemoryMap(struct MemoryMap* map, EFI_FILE_PROTOCOL* file) {
   len = AsciiStrLen(header);
   file->Write(file, &len, header);
 
-  Print(L"map->buffer = %08lx, map->map_size = %08lx\n",
+  Print(L"[+] map->buffer = %08lx, map->map_size = %08lx\n",
       map->buffer, map->map_size);
 
   EFI_PHYSICAL_ADDRESS iter;
@@ -282,25 +274,26 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
   }
 
   // ** exit boot service
-  Print(L"[.] Exiting Boot Services...\n");
+  //Print(L"[.] Exiting Boot Services...\n");
   status = gBS->ExitBootServices(image_handle, memmap.map_key);
-  Print(L"[.] Checking exit status...\n");
+  //Print(L"[.] Checking exit status...\n");
   if(EFI_ERROR(status)){
     //Print(L"[!] First check is error(%r). Re-getting memmap...\n", status);
     status = GetMemoryMap(&memmap);
     if(EFI_ERROR(status)){
       Print(L"[!] failed to get memory map: %r\n", status);
-      while(1==1);
+      Halt();
     }
     //Print(L"[.] Retrying to exit Boot Services...\n");
     status = gBS->ExitBootServices(image_handle, memmap.map_key);
     if(EFI_ERROR(status)){
       Print(L"[!] Couldn't exit boot service: %r\n", status);
-      while(1==1);
+      Halt();
     }
   }
 
   // ** get Frame Buffer information
+  //Print(L"[!] Fetching frame buffer information...\n");
   struct FrameBufferConfig config = {
     .frame_buffer = (UINT8*)gop->Mode->FrameBufferBase,
     .pixels_per_scan_line = gop->Mode->Info->PixelsPerScanLine,
@@ -317,18 +310,19 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE* system_tab
       break;
     default:
       Print(L"[!] Unimplemented pixel format: %d\n", gop->Mode->Info->PixelFormat);
+      Halt();
   }
 
   // ** boot kernel
   //Print(L"[.] Kernel is booting...\n"); // [guess] printing something would change memmap and invoke error.
   UINT64 entry_addr = *(UINT64*)(kernel_first_addr + 0x18); // 0x18 is offset inside ELF header, where addr of entry-point is written
-  typedef void EntryPointType(const struct FrameBufferConfig*);  
+  typedef void EntryPointType(const struct FrameBufferConfig*, const struct MemoryMap*);  
   EntryPointType *entry_point = (EntryPointType*)entry_addr; // cast addr of entrypoint into func pointer
-  entry_point(&config);
+  entry_point(&config, &memmap);
 
 
   Print(L"[.] All done\n");
 
-  while (1);
+  Halt();
   return EFI_SUCCESS;
 }

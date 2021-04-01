@@ -13,6 +13,7 @@
 #include"interrupt.hpp"
 #include"asmfunc.h"
 #include"queue.hpp"
+#include"memory_map.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -66,6 +67,10 @@ void MouseObserver(int8_t displacement_x, int8_t displacement_y)
 
 int printk(const char *format, ...)
 {
+  if(console == nullptr){
+    return -1;
+  }
+
   va_list ap;
   int result;
   char s[0x400];
@@ -119,8 +124,14 @@ void IntHandlerXHCI(InterruptFrame *frame)
 
 }
 
-extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
+extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config, const MemoryMap &memory_map)
 {
+  const std::array available_memory_types{
+    MemoryType::kEfiBootServicesCode,
+    MemoryType::kEfiBootServicesData,
+    MemoryType::kEfiConventionalMemory,
+  };
+
   // configure writer
   kFrameWidth = frame_buffer_config.horizontal_resolution;
   kFrameHeight = frame_buffer_config.vertical_resolution;
@@ -136,6 +147,19 @@ extern "C" void KernelMain(const FrameBufferConfig &frame_buffer_config)
   // draw desktop, console, and mouse
   drawDesktop(*pixel_writer);
   console = new(console_buf) Console{*pixel_writer, C_NORMAL_FG, C_NORMAL_BG};
+
+  // parse memory map
+  SetLogLevel(kDebug);
+  Log(kDebug, "[+] memory_map: %p\n", &memory_map);
+  for(uintptr_t iter = reinterpret_cast<uintptr_t>(memory_map.buffer); iter < reinterpret_cast<uintptr_t>(memory_map.buffer) + memory_map.map_size; iter += memory_map.descriptor_size){
+    auto desc = reinterpret_cast<MemoryDescriptor*>(iter);
+    for(int ix=0; ix!=available_memory_types.size(); ++ix){
+      if(desc->type == available_memory_types[ix]){
+        Log(kDebug, "mm: type=%x, phys=%08lx - %08lx, pages=%x, attr=%08llx\n", desc->type, desc->physical_start, desc->physical_start + desc->number_of_pages * 4096 - 1, desc->number_of_pages, desc->attribute);
+      }
+    }
+  }
+  SetLogLevel(kWarn);
 
   // prepare message queue
   std::array<Message, 32> main_queue_data;
