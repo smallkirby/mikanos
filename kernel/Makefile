@@ -1,7 +1,7 @@
 SHELL = /bin/bash
 
 TARGET = kernel.elf
-OBJS = main.o graphics.o font.o hankaku.o console.o pci.o asmfunc.o logger.o mouse.o interrupt.o \
+OBJS = main.o graphics.o font.o hankaku.o console.o pci.o asmfunc.o logger.o mouse.o interrupt.o segment.o \
 			libcxx_support.o newlib_support.o \
       usb/memory.o usb/device.o usb/xhci/ring.o usb/xhci/trb.o usb/xhci/xhci.o \
       usb/xhci/port.o usb/xhci/device.o usb/xhci/devmgr.o usb/xhci/registers.o \

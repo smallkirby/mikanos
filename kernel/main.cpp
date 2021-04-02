@@ -14,6 +14,7 @@
 #include"asmfunc.h"
 #include"queue.hpp"
 #include"memory_map.hpp"
+#include"segment.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -128,6 +129,14 @@ alignas(0x10) uint8_t kernel_main_stack[0x400 * 0x400];
 
 extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_ref, const MemoryMap &memory_map_ref)
 {
+  // set-up segments and change CS/SS
+  SetupSegments();
+
+  const uint16_t kernel_cs = 1 << 3;
+  const uint16_t kernel_ss = 2 << 3;
+  SetDSAll(0);
+  SetCSSS(kernel_cs, kernel_ss);
+
   // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
   FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
   MemoryMap memory_map{memory_map_ref};
