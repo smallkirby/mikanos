@@ -15,6 +15,7 @@
 #include"queue.hpp"
 #include"memory_map.hpp"
 #include"segment.hpp"
+#include"paging.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -136,6 +137,9 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
   const uint16_t kernel_ss = 2 << 3;
   SetDSAll(0);
   SetCSSS(kernel_cs, kernel_ss);
+
+  // init paging
+  SetupIdentityPageTable();
 
   // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
   FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
