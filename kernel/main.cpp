@@ -16,6 +16,7 @@
 #include"memory_map.hpp"
 #include"segment.hpp"
 #include"paging.hpp"
+#include"memory_manager.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -59,6 +60,10 @@ struct Message{
 
 // interruption message queue
 ArrayQueue<Message> *main_queue;
+
+// memory manager
+char memory_manager_buf[sizeof(BitmapMemoryManager)];
+BitmapMemoryManager *memory_manager;
 
 /*** (END globals) ***********/
 
@@ -144,6 +149,28 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
   // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
   FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
   MemoryMap memory_map{memory_map_ref};
+
+  // init memory-map manager
+  ::memory_manager = new(memory_manager_buf) BitmapMemoryManager;
+  const auto memory_map_base = reinterpret_cast<uintptr_t>(memory_map.buffer);
+  uintptr_t available_end = 0;
+  for(uintptr_t iter = memory_map_base; iter  < memory_map_base + memory_map.map_size; iter += memory_map.descriptor_size){
+    auto desc = reinterpret_cast<const MemoryDescriptor*>(iter);
+    // if there is a gap between `physical_start` and `available_end`, mark it as "ALLOCATED".
+    if(available_end < desc->physical_start){
+      memory_manager->MarkAllocated(FrameID{available_end / kBytesPerFrame}, (desc->physical_start - available_end) / kBytesPerFrame);
+    }
+
+    const auto physical_end = desc->physical_start + desc->number_of_pages * kUEFIPageSize;
+    if(IsAvailable(static_cast<MemoryType>(desc->type))){
+      available_end = physical_end;
+    }else{
+      memory_manager->MarkAllocated(FrameID{desc->physical_start / kBytesPerFrame}, desc->number_of_pages * kUEFIPageSize / kBytesPerFrame);
+    }
+    // not processed frames are treated as AVAILABLE(not allocated) as default.
+  }
+  memory_manager->SetMemoryRange(FrameID{1}, FrameID{available_end / kBytesPerFrame});
+
 
   const std::array available_memory_types{
     MemoryType::kEfiBootServicesCode,
