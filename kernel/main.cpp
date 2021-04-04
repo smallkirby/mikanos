@@ -171,6 +171,12 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
   }
   memory_manager->SetMemoryRange(FrameID{1}, FrameID{available_end / kBytesPerFrame});
 
+  // init heap
+  if(auto err = InitializeHeap(*memory_manager)){
+    Log(kError, "[!] Failed to allocate pages: %s at %s:%d\n", err.Name(), err.File(), err.Line());
+    exit(1);
+  }
+
 
   const std::array available_memory_types{
     MemoryType::kEfiBootServicesCode,
