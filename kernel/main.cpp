@@ -17,6 +17,8 @@
 #include"segment.hpp"
 #include"paging.hpp"
 #include"memory_manager.hpp"
+#include"window.hpp"
+#include"layer.hpp"
 
 #include"usb/memory.hpp"
 #include"usb/device.hpp"
@@ -36,18 +38,18 @@ void operator delete(void *obj) noexcept{
 }
 
 /******* globals *************/
+
+// memory manager
+char memory_manager_buf[sizeof(BitmapMemoryManager)];
+BitmapMemoryManager *memory_manager;
+
 char console_buf[sizeof(Console)];
 Console *console;
 
 char pixel_writer_buf[sizeof(RGBResv8BitPerColorPixelWriter)];
 PixelWriter *pixel_writer = nullptr;
 
-
-static int kFrameWidth;
-static int kFrameHeight;
-
-char mouse_cursor_buf[sizeof(MouseCursor)];
-MouseCursor *mouse_cursor;
+unsigned mouse_layer_id;
 
 usb::xhci::Controller *xhc;
 
@@ -61,15 +63,15 @@ struct Message{
 // interruption message queue
 ArrayQueue<Message> *main_queue;
 
-// memory manager
-char memory_manager_buf[sizeof(BitmapMemoryManager)];
-BitmapMemoryManager *memory_manager;
-
 /*** (END globals) ***********/
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y)
 {
-  mouse_cursor->MoveRelative({displacement_x, displacement_y});
+  if(displacement_x == 0 && displacement_y == 0){
+    return;
+  }
+  layer_manager->MoveRelative(mouse_layer_id, {displacement_x, displacement_y});
+  layer_manager->Draw();
 }
 
 int printk(const char *format, ...)
@@ -88,16 +90,6 @@ int printk(const char *format, ...)
 
   console->PutString(s);
   return result;
-}
-
-void drawDesktop(PixelWriter &writer)
-{
-  FillRectangle(writer, {0,0}, {kFrameWidth, kFrameHeight}, C_DESKTOP_BG);
-  FillRectangle(writer, {0, kFrameHeight-50}, {kFrameWidth, 50}, C_DESKTOP_FOOTER);
-  FillRectangle(writer, {0, kFrameHeight-50 + 3}, {kFrameHeight/5, 50-3-3}, C_DESKTOP_ACCENT);
-  DrawRectangle(writer, {0, kFrameHeight-50 + 3}, {kFrameHeight/5, 50-3-3}, C_DESKTOP_EDGE);
-
-  mouse_cursor = new(mouse_cursor_buf) MouseCursor{pixel_writer, C_DESKTOP_BG, {300,200}};
 }
 
 // Intel Panther Point chipset has both EHCI(USB2.0) and xHCI controllers,
@@ -135,6 +127,25 @@ alignas(0x10) uint8_t kernel_main_stack[0x400 * 0x400];
 
 extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_ref, const MemoryMap &memory_map_ref)
 {
+  // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
+  FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
+  MemoryMap memory_map{memory_map_ref};
+
+  // configure writer
+  switch(frame_buffer_config.pixel_format){
+    case kPixelRGBResv8BitPerColor:
+      pixel_writer = new(pixel_writer_buf) RGBResv8BitPerColorPixelWriter{frame_buffer_config};
+      break;
+    case kPixelBGRResv8BitPerColor:
+      pixel_writer = new(pixel_writer_buf) BGRResv8BitPerColorPixelWriter{frame_buffer_config};
+      break;
+  }
+
+  // setup console for early printk
+  DrawDesktop(*pixel_writer);
+  console = new(console_buf) Console{C_NORMAL_FG, C_NORMAL_BG};
+  console->SetWriter(pixel_writer);
+
   // set-up segments and change CS/SS
   SetupSegments();
 
@@ -145,10 +156,6 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
 
   // init paging
   SetupIdentityPageTable();
-
-  // save arguments into new stack, cuz EFI area is regarded as free and can be overwritten by this kernel itself.
-  FrameBufferConfig frame_buffer_config{frame_buffer_config_ref};
-  MemoryMap memory_map{memory_map_ref};
 
   // init memory-map manager
   ::memory_manager = new(memory_manager_buf) BitmapMemoryManager;
@@ -177,28 +184,12 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
     exit(1);
   }
 
-
   const std::array available_memory_types{
     MemoryType::kEfiBootServicesCode,
     MemoryType::kEfiBootServicesData,
     MemoryType::kEfiConventionalMemory,
   };
 
-  // configure writer
-  kFrameWidth = frame_buffer_config.horizontal_resolution;
-  kFrameHeight = frame_buffer_config.vertical_resolution;
-  switch(frame_buffer_config.pixel_format){
-    case kPixelRGBResv8BitPerColor:
-      pixel_writer = new(pixel_writer_buf) RGBResv8BitPerColorPixelWriter{frame_buffer_config};
-      break;
-    case kPixelBGRResv8BitPerColor:
-      pixel_writer = new(pixel_writer_buf) BGRResv8BitPerColorPixelWriter{frame_buffer_config};
-      break;
-  }
-
-  // draw desktop, console, and mouse
-  drawDesktop(*pixel_writer);
-  console = new(console_buf) Console{*pixel_writer, C_NORMAL_FG, C_NORMAL_BG};
 
   // parse memory map
   SetLogLevel(kDebug);
@@ -291,6 +282,46 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
       }
     }
   }
+
+
+  const int kFrameWidth = frame_buffer_config.horizontal_resolution;
+  const int kFrameHeight = frame_buffer_config.vertical_resolution;
+  // setup desktop layer and draw desktop
+  auto bgwindow = std::make_shared<Window>(kFrameWidth, kFrameHeight);
+  auto bgwriter = bgwindow->Writer();
+  DrawDesktop(*bgwriter);
+  // setup mouse layer
+  auto mouse_window = std::make_shared<Window>(kMouseCursorWidth, kMouseCursorHeight);
+  mouse_window->SetTransparentColor(kMouseTransparentColor);
+  DrawMouseCursor(mouse_window->Writer(), {0,0});
+  // setup console layer
+  auto console_window = std::make_shared<Window>(80*16, 25*16);
+  auto console_writer = console_window->Writer();
+  console->SetWriter(console_writer);
+  console->Clear();
+
+  // setup layer-manager
+  layer_manager = new LayerManager;
+  layer_manager->SetWriter(pixel_writer);
+
+  auto bglayer_id = layer_manager->NewLayer()
+    .SetWindow(bgwindow)
+    .Move({0,0})
+    .ID();
+  mouse_layer_id = layer_manager->NewLayer()
+    .SetWindow(mouse_window)
+    .Move({200, 200})
+    .ID();
+  auto console_layer_id = layer_manager->NewLayer()
+    .SetWindow(console_window)
+    .Move({10,10})
+    .ID();
+  Log(kWarn, "[+] console_layer is setup.\n");
+  
+  layer_manager->UpDown(bglayer_id, 0);
+  layer_manager->UpDown(console_layer_id, 1);
+  layer_manager->UpDown(mouse_layer_id, 99);
+  layer_manager->Draw();
 
   // poll message queue and process it
   while(1==1){
