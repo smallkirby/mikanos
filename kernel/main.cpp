@@ -67,9 +67,6 @@ ArrayQueue<Message> *main_queue;
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y)
 {
-  if(displacement_x == 0 && displacement_y == 0){
-    return;
-  }
   layer_manager->MoveRelative(mouse_layer_id, {displacement_x, displacement_y});
   layer_manager->Draw();
 }
@@ -295,7 +292,7 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
   mouse_window->SetTransparentColor(kMouseTransparentColor);
   DrawMouseCursor(mouse_window->Writer(), {0,0});
   // setup console layer
-  auto console_window = std::make_shared<Window>(80*16, 25*16);
+  auto console_window = std::make_shared<Window>(80*8, 25*16);
   auto console_writer = console_window->Writer();
   console->SetWriter(console_writer);
   console->Clear();
@@ -320,7 +317,7 @@ extern "C" void KernelMainNewStack(const FrameBufferConfig &frame_buffer_config_
   
   layer_manager->UpDown(bglayer_id, 0);
   layer_manager->UpDown(console_layer_id, 1);
-  layer_manager->UpDown(mouse_layer_id, 99);
+  layer_manager->UpDown(mouse_layer_id, 2);
   layer_manager->Draw();
 
   // poll message queue and process it
